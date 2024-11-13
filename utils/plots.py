@@ -445,21 +445,19 @@ def output_to_keypoint(output):
 
 
 def plot_skeleton_kpts(im, kpts, steps, orig_shape=None):
-    #Plot the skeleton and keypointsfor coco datatset
-    palette = np.array([[255, 128, 0], [255, 153, 51], [255, 178, 102],
-                        [230, 230, 0], [255, 153, 255], [153, 204, 255],
-                        [255, 102, 255], [255, 51, 255], [102, 178, 255],
-                        [51, 153, 255], [255, 153, 153], [255, 102, 102],
-                        [255, 51, 51], [153, 255, 153], [102, 255, 102],
-                        [51, 255, 51], [0, 255, 0], [0, 0, 255], [255, 0, 0],
-                        [255, 255, 255]])
-
+    # Định nghĩa màu xanh nhạt cho các điểm khớp và màu vàng nhạt cho các đoạn xương
+    light_blue = np.array([237, 149, 100])  
+    light_yellow = np.array([140, 230, 240])  
+    
+    # Định nghĩa cấu trúc đoạn nối giữa các điểm khớp
     skeleton = [[16, 14], [14, 12], [17, 15], [15, 13], [12, 13], [6, 12],
                 [7, 13], [6, 7], [6, 8], [7, 9], [8, 10], [9, 11], [2, 3],
                 [1, 2], [1, 3], [2, 4], [3, 5], [4, 6], [5, 7]]
 
-    pose_limb_color = palette[[9, 9, 9, 9, 7, 7, 7, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16]]
-    pose_kpt_color = palette[[16, 16, 16, 16, 16, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9]]
+    # Cập nhật màu cho các điểm khớp và đoạn xương
+    pose_kpt_color = [light_blue] * 17  # Tất cả các điểm khớp có màu xanh nhạt
+    pose_limb_color = [light_yellow] * len(skeleton)  # Tất cả các đoạn xương có màu vàng nhạt
+    
     radius = 5
     num_kpts = len(kpts) // steps
 

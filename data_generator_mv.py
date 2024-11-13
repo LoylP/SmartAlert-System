@@ -17,7 +17,7 @@ print(device)
 
 # Lines 19-66 are from YOLOv7 model a bit modified
 def load_model():
-    model = torch.load('/mnt/d/yolov7-w6-pose.pt', map_location=device)['model']
+    model = torch.load('config/yolov7-w6-pose.pt', map_location=device)['model']
     # Put in inference mode
     model.float().eval()
 

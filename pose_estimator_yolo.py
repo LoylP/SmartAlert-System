@@ -22,41 +22,38 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 print(torch.cuda.is_available())
 
-# Lines 25-73 are from YOLOv7 model a bit modified
-def load_model():
-    model = torch.load('/mnt/d/yolov7-w6-pose.pt', map_location=device)['model']
-    # Put in inference mode
-    model.float().eval()
 
+def load_models():
+    global model, NN
+    # Load YOLOv7 model
+    model = torch.load('config/yolov7-w6-pose.pt', map_location=device)['model']
+    model.float().eval()
     if torch.cuda.is_available():
-        # half() turns predictions into float16 tensors
-        # which significantly lowers inference time
         model.half().to(device)
-    return model
+    
+    # Load Neural Network model
+    with open("config/pickle_model37VTrD.pkl", 'rb') as file:
+        NN = pickle.load(file)
 
 
 def run_inference(image):
-    # Resize and pad image
-    image = letterbox(image, 960, stride=64, auto=True)[0]  # shape: (567, 960, 3)
-    # Apply transforms
-    image = transforms.ToTensor()(image)  # torch.Size([3, 567, 960])
+    image = letterbox(image, 960, stride=64, auto=True)[0]
+    image = transforms.ToTensor()(image)
     if torch.cuda.is_available():
         image = image.half().to(device)
-    # Turn image into batch
-    image = image.unsqueeze(0)  # torch.Size([1, 3, 567, 960])
+    image = image.unsqueeze(0)
     with torch.no_grad():
         output, _ = model(image)
     return output, image
 
-
 def draw_keypoints(output, image):
     ret_kps = []
     output = non_max_suppression_kpt(output,
-                                     0.25,  # Confidence Threshold
-                                     0.65,  # IoU Threshold
-                                     nc=model.yaml['nc'],  # Number of Classes
-                                     nkpt=model.yaml['nkpt'],  # Number of Keypoints
-                                     kpt_label=True)
+                                   0.25,
+                                   0.65,
+                                   nc=model.yaml['nc'],
+                                   nkpt=model.yaml['nkpt'],
+                                   kpt_label=True)
     with torch.no_grad():
         output = output_to_keypoint(output)
     nimg = image[0].permute(1, 2, 0) * 255
@@ -72,12 +69,104 @@ def draw_keypoints(output, image):
 
     return nimg, ret_kps
 
+def process_video_frames(video_path, forcus = ["fall", "fallen"], warning = None, time_warning = 10):
+    timer = None
+    cap = cv2.VideoCapture(video_path)
+    fps_time = 0
+    frame_n = 0
+    vid_fps = cap.get(cv2.CAP_PROP_FPS)
+    COLOR_SET = (102, 255, 255)
 
-model = load_model()
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        frame_number = frame_n / vid_fps
+        frame_n += 1
+
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        output, frame = run_inference(frame)
+        frame, keypoints_ = draw_keypoints(output, frame)
+
+        try:
+            coords_line = [get_coords_line(keypoints_[0])]
+            for human_kps in keypoints_:
+                hum_crd_ln = [get_coords_line(human_kps)]
+                if 34 >= len(hum_crd_ln) >= 1:
+                    pose_code = NN.predict(hum_crd_ln)
+                    pose_label = get_pose_from_num(pose_code)
+                    
+                    if pose_label in forcus:
+                        COLOR_SET = (0,140,255)
+                        timer = None
+                    
+                    elif pose_label in warning:
+                        COLOR_SET = (0,69,255)
+                        if timer is None:
+                            timer = time.time()
+                        elif time.time() - timer > time_warning:
+                            COLOR_SET = (0, 0, 255)
+                    
+                    else:
+                        COLOR_SET = (102, 255, 255)
+                        timer = None
+
+                    cv2.putText(frame,
+                              f"pose: {pose_label}",
+                              (int(hum_crd_ln[0][0]), int(hum_crd_ln[0][1]) - 45),
+                              cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                              COLOR_SET, 2)
+
+        except Exception as e:
+            print(f"Error processing frame {frame_n}: {str(e)}")
+            continue
+
+        # Add FPS counter
+        cv2.putText(frame,
+                   f"FPS: {1.0 / (time.time() - fps_time):.2f}",
+                   (10, 30),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1,
+                   (0, 255, 0), 2)
+        
+        fps_time = time.time()
+
+        # Convert frame to JPEG
+        _, buffer = cv2.imencode('.jpg', frame)
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
+
+    cap.release()
 
 
-def pose_estimation_video(filename, NN_pose_est):
-    vid_path = filename
+# Getting train dataset
+path = ""  # "videos/csv_files/"
+filename = "config/37vid_data_train_yolo.csv"# "37vid_data_train.csv" "37vid_data_train.csv"
+train_poses, train_coords = csv_converter(path, filename)
+train_poses_num = pose_to_num(train_poses)
+
+# Training model
+
+# NN = MLPClassifier(solver='lbfgs', activation='logistic', alpha=1e-5, hidden_layer_sizes=(150, 10), random_state=1,
+#                    max_iter=10000).fit(train_coords, train_poses_num)
+
+# pkl_filename = "config/pickle_model37VTrD.pkl"
+# with open(pkl_filename, 'wb') as file:
+#     pickle.dump(NN, file)
+
+# input_videos = "/mnt/d/dataimg/output007.mp4"
+
+# parser = argparse.ArgumentParser()
+# parser.add_argument('-i', '--input', default=input_videos,
+#                     help='path to the input data')
+# args = vars(parser.parse_args())
+
+# pose_estimation_video(args['input'], NN)  
+
+def run():
+    load_models()
+
+    vid_path = "/home/loylp/project/SmartAlert-System/uploads/fall.mp4"
     # print(vid_path)
     cap = cv2.VideoCapture(vid_path)
     # fourcc = cv2.VideoWriter_fourcc(*'MP4V')
@@ -91,7 +180,7 @@ def pose_estimation_video(filename, NN_pose_est):
 
     COLOR_SET = (102, 255, 255)
     fallen_timer = None
-    fallen_duration_threshold = 5
+    fallen_duration_threshold = 10
 
     # Main cycle for each frame
     while cap.isOpened():
@@ -117,7 +206,7 @@ def pose_estimation_video(filename, NN_pose_est):
                     # print(human_kps)
                     hum_crd_ln = [get_coords_line(human_kps)]
                     if 34 >= len(hum_crd_ln) >= 1:
-                        pose_code = NN_pose_est.predict(hum_crd_ln)
+                        pose_code = NN.predict(hum_crd_ln)
                         pose_label = get_pose_from_num(pose_code)
                         if pose_label == "fall":
                             COLOR_SET = (0, 102, 204)
@@ -125,20 +214,20 @@ def pose_estimation_video(filename, NN_pose_est):
                                 fallen_timer = time.time()  # Start the timer 
                             elif time.time() - fallen_timer > fallen_duration_threshold:
                                 COLOR_SET = (255, 0, 0)  # Pink for fall over 3 seconds
-                            print("time fall: ", fallen_timer)
+                
                         elif pose_label == "fallen":
                             COLOR_SET = (0, 0, 255)
                             if fallen_timer is None:
                                 fallen_timer = time.time()  # Start the timer 
                             elif time.time() - fallen_timer > fallen_duration_threshold:
                                 COLOR_SET = (255, 0, 0)  # Pink for fallen over 3 seconds
-                            print("time fall: ", fallen_timer)
+                
                         else:
                             COLOR_SET = (102, 255, 255)
                             fallen_timer = None
 
                         cv2.putText(frame,
-                                    "person: %s" % (pose_label),
+                                    "pose: %s" % (pose_label),
                                     (int(hum_crd_ln[0][0]), int(hum_crd_ln[0][1]) - 45), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
                                     COLOR_SET, 2)
 
@@ -148,7 +237,7 @@ def pose_estimation_video(filename, NN_pose_est):
             pose_label = "none"
 
             if 34 >= len(coords_line) >= 1:
-                pose_code = NN_pose_est.predict(coords_line)
+                pose_code = NN.predict(coords_line)
                 pose_label = get_pose_from_num(pose_code)
 
             cv2.putText(frame,
@@ -172,34 +261,7 @@ def pose_estimation_video(filename, NN_pose_est):
             break
 
     cap.release()
-    # out.release()
     cv2.destroyAllWindows()
 
 
-# Getting train dataset
-path = ""  # "videos/csv_files/"
-filename = "config/37vid_data_train_yolo.csv"# "37vid_data_train.csv" "37vid_data_train.csv"
-train_poses, train_coords = csv_converter(path, filename)
-train_poses_num = pose_to_num(train_poses)
-
-# Training model
-
-# NN = MLPClassifier(solver='lbfgs', activation='logistic', alpha=1e-5, hidden_layer_sizes=(150, 10), random_state=1,
-#                    max_iter=10000).fit(train_coords, train_poses_num)
-
-# pkl_filename = "config/pickle_model37VTrD.pkl"
-# with open(pkl_filename, 'wb') as file:
-#     pickle.dump(NN, file)
-NN = ""
-with open("config/pickle_model37VTrD.pkl", 'rb') as file:
-    NN = pickle.load(file)
-
-parser = argparse.ArgumentParser()
-parser.add_argument('-i', '--input', required=True,
-                    help='path to the input data')
-args = vars(parser.parse_args())
-
-pose_estimation_video(args['input'], NN)  # "./videos/50wtf.mp4")  # args['input'])
-
-# data_path_ = "videos/cuts_test/"
-# pose_estimation_video(data_path_, test_data)
+# run()

@@ -16,3 +16,9 @@ seaborn
 ipython
 psutil
 thop 
+fastapi
+uvicorn
+python-multipart
+supervision
+ultralytics
+typer

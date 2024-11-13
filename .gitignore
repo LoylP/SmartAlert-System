@@ -36,3 +36,7 @@ google-services.json
 env/
 /videos
 __pycache__
+
+uploads
+api.py
+config
