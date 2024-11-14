@@ -3,6 +3,8 @@ import os
 import supervision as sv
 from ultralytics import YOLO
 import typer
+import numpy as np
+from warning_area import draw_polygon, is_point_in_polygon
 
 # Load the model
 model_yolov10 = YOLO("config/yolov10x.pt")
@@ -87,12 +89,13 @@ def detect_faces(faceNet, frame, conf_threshold=0.7):
             boxes.append([x1, y1, x2, y2])
     return boxes
 
-def process_video_object(video_source, ban_object=["knife"], ban_ages=None, ban_genders=None):
+def process_video_object(video_source, ban_object=["knife"], ban_ages=None, ban_genders=None, points=[]):
     cap = cv2.VideoCapture(video_source)
     if not cap.isOpened():
         raise ValueError("Unable to open video source")
 
     faceNet, ageNet, genderNet = initialize_age_gender_models()
+    # points = [[500, 1000], [1050, 1000], [900, 200], [100, 200], [500, 1000]]
     
     while True:
         ret, frame = cap.read()
@@ -105,6 +108,16 @@ def process_video_object(video_source, ban_object=["knife"], ban_ages=None, ban_
         for box, class_id, confidence in zip(detections.xyxy, detections.class_id, detections.confidence):
             class_name = category_dict[class_id]
             color_set = (238, 238, 175)
+
+            ## Tính điểm trung tâm của object
+            center_x = int((box[0] + box[2]) / 2)
+            center_y = int((box[1] + box[3]) / 2)
+            center_point = (center_x, center_y)
+
+            if (class_name in ban_object) and is_point_in_polygon(center_point, points):
+                # Hiển thị cảnh báo "Warning"
+                cv2.putText(frame, "Warning", (center_x, center_y - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
 
             if class_name == "person":
                 color_set = (0, 215, 255)
@@ -143,12 +156,18 @@ def process_video_object(video_source, ban_object=["knife"], ban_ages=None, ban_
                             (int(box[0]), int(box[1] - 10)),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.9, color_set, 2)
 
+        if points:
+            frame = draw_polygon(frame, points)
+
         # Convert frame to JPEG
         ret, buffer = cv2.imencode('.jpg', frame)
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
 
     cap.release()
+
+points = None
+# points = [[500, 1000], [1050, 1000], [900, 200], [100, 200], [500, 1000]]
 
 def process_webcam():
     cap = cv2.VideoCapture("http://192.168.1.3:8080/video")  # 0 is typically the default webcam
@@ -165,12 +184,24 @@ def process_webcam():
         if not ret:
             break
 
+        
         results = model_yolov10(frame)[0]
         detections = sv.Detections.from_ultralytics(results)
 
         for box, class_id, confidence in zip(detections.xyxy, detections.class_id, detections.confidence):
             class_name = category_dict[class_id]
             color_set = (238, 238, 175)
+            
+            ## Tính điểm trung tâm của object
+            center_x = int((box[0] + box[2]) / 2)
+            center_y = int((box[1] + box[3]) / 2)
+            center_point = (center_x, center_y)
+
+            if class_name == "knife" and is_point_in_polygon(center_point, points):
+                # Hiển thị cảnh báo "Warning"
+                cv2.putText(frame, "Warning", (center_x, center_y - 20),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+
             if class_name == "person":
                 color_set = (0, 215, 255)
                 # Phát hiện khuôn mặt
@@ -199,6 +230,9 @@ def process_webcam():
                 cv2.rectangle(frame, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), color_set, 2)
                 cv2.putText(frame, f"{class_name}: {confidence:.2f}", (int(box[0]), int(box[1] - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.9, color_set, 2)
+
+        if points:
+            frame = draw_polygon(frame, points)
 
         cv2.imshow("Webcam", frame)
         if cv2.waitKey(25) & 0xFF == ord("q"):

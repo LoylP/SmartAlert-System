@@ -17,6 +17,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.neural_network import MLPClassifier
 import pickle
 from utilities import csv_converter, pose_to_num, get_pose_from_num, most_frequent, keypoints_parser, get_coords_line
+from warning_area import draw_polygon, is_point_in_polygon
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
@@ -69,10 +70,9 @@ def draw_keypoints(output, image):
 
     return nimg, ret_kps
 
-def process_video_frames(video_path, forcus = ["fall", "fallen"], warning = None, time_warning = 10):
+def process_video_frames(video_path, focus=None, warning=None, time_warning=10, points=[]):
     timer = None
     cap = cv2.VideoCapture(video_path)
-    fps_time = 0
     frame_n = 0
     vid_fps = cap.get(cv2.CAP_PROP_FPS)
     COLOR_SET = (102, 255, 255)
@@ -85,6 +85,7 @@ def process_video_frames(video_path, forcus = ["fall", "fallen"], warning = None
         frame_number = frame_n / vid_fps
         frame_n += 1
 
+        # Preprocess and run inference
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         output, frame = run_inference(frame)
         frame, keypoints_ = draw_keypoints(output, frame)
@@ -96,22 +97,28 @@ def process_video_frames(video_path, forcus = ["fall", "fallen"], warning = None
                 if 34 >= len(hum_crd_ln) >= 1:
                     pose_code = NN.predict(hum_crd_ln)
                     pose_label = get_pose_from_num(pose_code)
+                    center_point = (int(hum_crd_ln[0][0]), int(hum_crd_ln[0][1]))
                     
-                    if pose_label in forcus:
-                        COLOR_SET = (0,140,255)
+                    if pose_label in focus:
+                        COLOR_SET = (0, 140, 255)
                         timer = None
                     
                     elif pose_label in warning:
-                        COLOR_SET = (0,69,255)
+                        if is_point_in_polygon(center_point, points):
+                            cv2.putText(frame, "Warning", (center_point[0], center_point[1] - 70), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 0, 255), 3)
+
+                        COLOR_SET = (0, 69, 255)
+                        
                         if timer is None:
                             timer = time.time()
                         elif time.time() - timer > time_warning:
-                            COLOR_SET = (0, 0, 255)
-                    
+                            COLOR_SET = (0, 0, 255)  
+                            
                     else:
                         COLOR_SET = (102, 255, 255)
                         timer = None
 
+                    # Display pose label with corresponding color
                     cv2.putText(frame,
                               f"pose: {pose_label}",
                               (int(hum_crd_ln[0][0]), int(hum_crd_ln[0][1]) - 45),
@@ -122,16 +129,10 @@ def process_video_frames(video_path, forcus = ["fall", "fallen"], warning = None
             print(f"Error processing frame {frame_n}: {str(e)}")
             continue
 
-        # Add FPS counter
-        cv2.putText(frame,
-                   f"FPS: {1.0 / (time.time() - fps_time):.2f}",
-                   (10, 30),
-                   cv2.FONT_HERSHEY_SIMPLEX, 1,
-                   (0, 255, 0), 2)
-        
-        fps_time = time.time()
+        if points:
+            frame = draw_polygon(frame, points)
 
-        # Convert frame to JPEG
+        # Convert frame to JPEG for display
         _, buffer = cv2.imencode('.jpg', frame)
         yield (b'--frame\r\n'
                b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
