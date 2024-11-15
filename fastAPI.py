@@ -23,6 +23,7 @@ import supervision as sv
 from ultralytics import YOLO
 from object_gender_age import detect_age_gender, detect_faces, initialize_age_gender_models, category_dict, model_yolov10, MODEL_MEAN_VALUES, ageList, genderList, process_video_object
 from pose_estimator_yolo import load_models, run_inference, draw_keypoints, process_video_frames
+from warning_area import draw_grid, draw_polygon, is_point_in_polygon
 
 app = FastAPI()
 
@@ -68,6 +69,43 @@ async def upload_video(file: UploadFile = File(...)):
             "message": str(e)
         }, status_code=500)
 
+points = []
+
+@app.post("/add_point/")
+def add_point(x: int, y: int):
+    points.append([x, y])
+    return {"message": "Point added", "points": points}
+
+@app.post("/clear_points/")
+def clear_points():
+    points.clear()
+    return {"message": "All points cleared"}
+
+@app.get("/points")
+def get_points():
+    return {"points": points}
+
+@app.get("/camera-point")
+def video_feed_with_grid(url:str):
+    cap = cv2.VideoCapture(url)
+
+    def generate():
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                break
+            width, height, _ = frame.shape
+            frame = draw_grid(frame, width, height)
+            frame = draw_polygon(frame, points)
+
+            _, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+
+    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+
 @app.get("/pose_video/{filename}")
 async def pose_video(
     filename: str,
@@ -97,7 +135,7 @@ async def pose_video_url(
 ):
 
     return StreamingResponse(
-        process_video_frames(url, forcus, warning, time_warning),
+        process_video_frames(url, forcus, warning, time_warning, points),
         media_type='multipart/x-mixed-replace; boundary=frame'
     )
 
@@ -144,9 +182,9 @@ async def object_stream(
 
     if not valid_ban_objects:
         valid_ban_objects = ["knife"]
-        
+    
     return StreamingResponse(
-        process_video_object(url, valid_ban_objects, valid_ban_ages, valid_ban_genders),
+        process_video_object(url, valid_ban_objects, valid_ban_ages, valid_ban_genders, points),
         media_type='multipart/x-mixed-replace; boundary=frame'
     )
 
